@@ -303,6 +303,29 @@ class MSSDataset(torch.utils.data.Dataset):
                     source = apply_aug(samples=source, sample_rate=44100)
                     applied_augs.append('time_stretch')
 
+        # Clipping Distortion: this happens when the signal is too loud and the amplitude is clipped (poorly recorded)
+        if 'clipping_distortion' in augs:
+            if augs['clipping_distortion'] > 0:
+                if random.uniform(0, 1) < augs['clipping_distortion']:
+                    apply_aug = AU.ClippingDistortion(
+                        min_percentile_threshold=augs['clipping_distortion_min_percentile'],
+                        max_percentile_threshold=augs['clipping_distortion_max_percentile'],
+                        p=1.0
+                    )
+                    source = apply_aug(samples=source, sample_rate=44100)
+                    applied_augs.append('clipping_distortion')
+        
+        if 'aliasing' in augs:
+            if augs['aliasing'] > 0:
+                if random.uniform(0, 1) < augs['aliasing']:
+                    apply_aug = AU.Aliasing(
+                        min_sample_rate=augs['aliasing_min_sample_rate'],
+                        max_sample_rate=augs['aliasing_max_sample_rate'],
+                        p=1.0
+                    )
+                    source = apply_aug(samples=source, sample_rate=44100)
+                    applied_augs.append('aliasing')
+
         # Possible fix of shape
         if source_shape != source.shape:
             source = source[..., :source_shape[-1]]
@@ -518,6 +541,65 @@ class MSSDataset(torch.utils.data.Dataset):
                 if mix.shape != required_shape:
                     mix = mix[..., :required_shape[-1]]
                 mix = torch.tensor(mix, dtype=torch.float32)
+
+            # Clipping Distortion on Mixture 
+            if 'clipping_distortion_on_mixture' in self.config['augmentations']:
+                if self.config['augmentations']['clipping_distortion_on_mixture'] > 0:
+                    if random.uniform(0, 1) < self.config['augmentations']['clipping_distortion_on_mixture']:
+                        apply_aug = AU.ClippingDistortion(
+                            min_percentile_threshold=self.config['augmentations']['clipping_distortion_on_mixture_min_percentile'],
+                            max_percentile_threshold=self.config['augmentations']['clipping_distortion_on_mixture_max_percentile'],
+                            p=1.0
+                        )
+                        mix_conv = mix.cpu().numpy().astype(np.float32)
+                        required_shape = mix_conv.shape
+                        mix = apply_aug(samples=mix_conv, sample_rate=44100)
+                        if mix.shape != required_shape:
+                            mix = mix[..., :required_shape[-1]]
+                        mix = torch.tensor(mix, dtype=torch.float32)
+
+            # Aliasing on Mixture
+            if 'aliasing_on_mixture' in self.config['augmentations']:
+                if self.config['augmentations']['aliasing_on_mixture'] > 0:
+                    if random.uniform(0, 1) < self.config['augmentations']['aliasing_on_mixture']:
+                        apply_aug = AU.Aliasing(
+                            min_sample_rate=self.config['augmentations']['aliasing_on_mixture_min_sample_rate'],
+                            max_sample_rate=self.config['augmentations']['aliasing_on_mixture_max_sample_rate'],
+                            p=1.0
+                        )
+                        mix_conv = mix.cpu().numpy().astype(np.float32)
+                        required_shape = mix_conv.shape
+                        mix = apply_aug(samples=mix_conv, sample_rate=44100)
+                        if mix.shape != required_shape:
+                            mix = mix[..., :required_shape[-1]]
+                        mix = torch.tensor(mix, dtype=torch.float32)
+
+            if 'background_noise_on_mixture' in self.config['augmentations']:
+                bg_noise_config = self.config['augmentations']['background_noise_on_mixture']
+                if random.uniform(0, 1) < bg_noise_config.get('probability', 1.0):
+                    noise_file_path = bg_noise_config['path']  # Path to the preprocessed background noise file
+                    
+                    # Define a noise_transform with Shift augmentation
+                    noise_transform = AU.Compose([
+                        AU.Shift(min_fraction=-0.5, max_fraction=0.5, rollover=True, p=1.0)
+                    ])
+
+                    apply_aug = AU.AddBackgroundNoise(
+                        sounds_path=noise_file_path,
+                        noise_rms="absolute",
+                        min_absolute_rms_db=bg_noise_config.get('min_absolute_rms_db', -25.0),  # must not exceed 0.0
+                        max_absolute_rms_db=bg_noise_config.get('max_absolute_rms_db', -1.0),  # must not exceed 0.0
+                        noise_transform=noise_transform,  # Apply shifting noise transform
+                        p=1.0
+                    )
+                    mix_np = mix.cpu().numpy().astype(np.float32)  # Ensure mix is in NumPy format for audiomentations
+                    mix_np = apply_aug(samples=mix_np, sample_rate=44100)
+                    mix = torch.tensor(mix_np, dtype=torch.float32)  # Convert back to tensor
+
+                    # Ensure the mix's shape matches the required shape, similar to other augmentations
+                    required_shape = mix_np.shape
+                    if mix_np.shape != required_shape:
+                        mix = mix[..., :required_shape[-1]]
 
         # If we need only given stem (for roformers)
         if self.config.training.target_instrument is not None:

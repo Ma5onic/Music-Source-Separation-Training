@@ -20,6 +20,12 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+from typing import Dict, List, Tuple, Optional, Union, Any
+import matplotlib.pyplot as plt
+import librosa
+import librosa.display
+
 
 from dataset import MSSDataset
 from utils import demix_track, demix_track_demucs, sdr, get_model_from_config
@@ -96,8 +102,25 @@ def load_not_compatible_weights(model, weights, verbose=False):
     model.load_state_dict(
         new_model
     )
+    
+def log_spectrogram(writer, tag, spectrogram, global_step):
+    fig, ax = plt.subplots(figsize=(5, 4))
+    img = librosa.display.specshow(librosa.amplitude_to_db(spectrogram, ref=np.max),
+                                   y_axis='mel', x_axis='time', ax=ax)
+    fig.colorbar(img, ax=ax, format="%+2.0f dB")
+    ax.set(title=f'Mel Spectrogram - {tag}')
+    
+    # Convert plot to image tensor
+    fig.canvas.draw()
+    img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    img = np.moveaxis(img, 2, 0)
+    img = torch.tensor(img / 255.0)
+    writer.add_image(tag, img, global_step)
+    
+    plt.close(fig)
 
-def valid(model, args, config, device, verbose=False):
+def valid(model, args, config, device, writer, epoch, verbose=False):
     # For multiGPU extract single model
     if len(args.device_ids) > 1:
         model = model.module
@@ -116,6 +139,40 @@ def valid(model, args, config, device, verbose=False):
     if config.training.target_instrument is not None:
         instruments = [config.training.target_instrument]
 
+    # Only process the first song for logging 
+    val_song_path = all_mixtures_path[0]  # Change 0 to the index of the song you want to log
+    mix, sr = sf.read(val_song_path)
+    folder = os.path.dirname(val_song_path)
+    if verbose:
+        print('Logging Song: {}'.format(os.path.basename(folder)))
+    mixture = torch.tensor(mix.T, dtype=torch.float32).unsqueeze(0).to(device)
+    if args.model_type == 'htdemucs':
+        res = demix_track_demucs(config, model, mixture, device)
+    else:
+        res = demix_track(config, model, mixture, device)
+
+    for instr in instruments:
+        if instr != 'other' or config.training.other_fix is False:
+            track, sr1 = sf.read(folder + '/{}.wav'.format(instr))
+        else:
+            track, sr1 = sf.read(folder + '/vocals.wav')
+            track = mix - track
+
+        writer.add_audio(f'separated/{instr}', res[instr].squeeze().cpu().numpy(), epoch, sample_rate=sr)  # Log separated track
+        writer.add_audio(f'ground_truth/{instr}', track, epoch, sample_rate=sr)  # Log ground truth track
+
+        # Compute and log mel spectrograms
+        stft_sep = librosa.stft(res[instr].cpu().numpy().squeeze(), n_fft=1024, hop_length=512)
+        stft_gt = librosa.stft(track, n_fft=1024, hop_length=512)
+        mel_sep = librosa.feature.melspectrogram(S=np.abs(stft_sep)**2)  # Separated track
+        mel_gt = librosa.feature.melspectrogram(S=np.abs(stft_gt)**2)  # Ground truth is the original track
+        mel_noise = librosa.feature.melspectrogram(S=np.abs(stft_gt - stft_sep)**2)  # Noise is the difference between the ground truth and separated tracks
+
+        log_spectrogram(writer, f'Spectrogram/Separated_{instr}', mel_sep, epoch)
+        log_spectrogram(writer, f'Spectrogram/Ground_Truth_{instr}', mel_gt, epoch)
+        log_spectrogram(writer, f'Spectrogram/Noise_{instr}', mel_noise, epoch)
+
+
     all_sdr = dict()
     for instr in config.training.instruments:
         all_sdr[instr] = []
@@ -127,6 +184,7 @@ def valid(model, args, config, device, verbose=False):
     for path in all_mixtures_path:
         mix, sr = sf.read(path)
         folder = os.path.dirname(path)
+        val_song_path = all_mixtures_path[0]  # Change 0 to the index of the song you want to log
         if verbose:
             print('Song: {}'.format(os.path.basename(folder)))
         mixture = torch.tensor(mix.T, dtype=torch.float32)
@@ -331,6 +389,10 @@ def train_model(args):
 
     model, config = get_model_from_config(args.model_type, args.config_path)
     print("Instruments: {}".format(config.training.instruments))
+    
+    # Adjustments to extract logging settings
+    logging_config = config.get('logging', {})
+    run_name = logging_config.get('run_name', args.model_type)
 
     if not os.path.isdir(args.results_path):
         os.mkdir(args.results_path)
@@ -426,6 +488,17 @@ def train_model(args):
     scaler = GradScaler()
     print('Train for: {}'.format(config.training.num_epochs))
     best_sdr = -100
+    
+    # Tensorboard logging
+    writer = SummaryWriter(log_dir=f"{args.results_path}/tensorboard_logs/{run_name}", flush_secs=30)
+    writer.add_text('args', str(args))
+    writer.add_text('model', str(model))
+    writer.add_text('optimizer', str(optimizer))
+    writer.add_text('scheduler', str(scheduler))
+    writer.add_text('scaler', str(scaler))
+    writer.add_text('config', str(config))
+    writer.add_text('run_name', args.model_type)
+    
     for epoch in range(config.training.num_epochs):
         model.train().to(device)
         print('Train epoch: {} Learning rate: {}'.format(epoch, optimizer.param_groups[0]['lr']))
