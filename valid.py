@@ -13,6 +13,7 @@ import soundfile as sf
 import numpy as np
 import torch.nn as nn
 import multiprocessing
+from log_wmse_audio_quality import calculate_log_wmse
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -72,9 +73,17 @@ def proc_list_of_files(
                 if args.store_dir != "":
                     sf.write("{}/{}_{}.wav".format(args.store_dir, os.path.basename(folder), instr), res[instr].T, sr,
                              subtype='FLOAT')
-                references = np.expand_dims(track, axis=0)
-                estimates = np.expand_dims(res[instr].T, axis=0)
-                sdr_val = sdr(references, estimates)[0]
+                    
+                if config.training.logwmse:
+                    input = np.transpose(mix)
+                    estimates = np.transpose(res[instr].T)
+                    target =  np.transpose(track)
+                    sdr_val = calculate_log_wmse(input, estimates, target, sr1)
+                else:
+                    references = np.expand_dims(track, axis=0)
+                    estimates = np.expand_dims(res[instr].T, axis=0)
+                    sdr_val = sdr(references, estimates)[0]
+                    
                 if verbose:
                     print(instr, res[instr].shape, sdr_val)
                 all_sdr[instr].append(sdr_val)
