@@ -34,7 +34,6 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-
 def masked_loss(y_, y, q, coarse=True):
     # shape = [num_sources, batch_size, num_channels, chunk_size]
     loss = torch.nn.MSELoss(reduction='none')(y_, y).transpose(0, 1)
@@ -47,14 +46,20 @@ def masked_loss(y_, y, q, coarse=True):
     return (loss * mask).mean()
 
 
-def manual_seed(seed):
+def manual_seed(seed=None):
+    if seed is None:
+        # Generate a random seed
+        seed = random.randint(1, 10000)
+        print("Random Seed: ", seed)
+    else:
+        print("Manual Seed: ", seed)
+    
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # if multi-GPU
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    os.environ["PYTHONHASHSEED"] = str(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
 
 def load_not_compatible_weights(model, weights, verbose=False):
@@ -103,7 +108,10 @@ def load_not_compatible_weights(model, weights, verbose=False):
         new_model
     )
     
-def log_spectrogram(writer, tag, spectrogram, global_step):
+def log_spectrogram(writer, tag, spectrogram, global_step, config):
+    if not config['spectrogram_plotting'].get('enable', False):
+        return  # Exit if plotting is disabled
+        
     fig, ax = plt.subplots(figsize=(5, 4))
     img = librosa.display.specshow(librosa.amplitude_to_db(spectrogram, ref=np.max),
                                    y_axis='mel', x_axis='time', ax=ax)
@@ -151,12 +159,13 @@ def valid(model, args, config, device, writer, epoch, verbose=False):
     else:
         res = demix_track(config, model, mixture, device)
 
-    for instr in instruments:
-        if instr != 'other' or config.training.other_fix is False:
-            track, sr1 = sf.read(folder + '/{}.wav'.format(instr))
-        else:
-            track, sr1 = sf.read(folder + '/vocals.wav')
-            track = mix - track
+    if config['spectrogram_plotting'].get('enable', False):
+        for instr in instruments:
+            if instr != 'other' or config.training.other_fix is False:
+                track, sr1 = sf.read(folder + '/{}.wav'.format(instr))
+            else:
+                track, sr1 = sf.read(folder + '/vocals.wav')
+                track = mix - track
 
         writer.add_audio(f'separated/{instr}', res[instr].squeeze().cpu().numpy(), epoch, sample_rate=sr)  # Log separated track
         writer.add_audio(f'ground_truth/{instr}', track, epoch, sample_rate=sr)  # Log ground truth track
@@ -382,7 +391,10 @@ def train_model(args):
     else:
         args = parser.parse_args(args)
 
-    manual_seed(args.seed + int(time.time()))
+    # If seed is provided (not 0), use it; otherwise, generate a random seed
+    seed = args.seed if args.seed != 0 else None
+    manual_seed(seed)  # Adjusted call to manual_seed
+
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = False # Fix possible slow down with dilation convolutions
     torch.multiprocessing.set_start_method('spawn')
@@ -395,7 +407,7 @@ def train_model(args):
     run_name = logging_config.get('run_name', args.model_type)
 
     if not os.path.isdir(args.results_path):
-        os.mkdir(args.results_path)
+        os.makedirs(args.results_path)
 
     use_amp = True
     try:
@@ -490,14 +502,16 @@ def train_model(args):
     best_sdr = -100
     
     # Tensorboard logging
-    writer = SummaryWriter(log_dir=f"{args.results_path}/tensorboard_logs/{run_name}", flush_secs=30)
-    writer.add_text('args', str(args))
-    writer.add_text('model', str(model))
-    writer.add_text('optimizer', str(optimizer))
-    writer.add_text('scheduler', str(scheduler))
-    writer.add_text('scaler', str(scaler))
-    writer.add_text('config', str(config))
-    writer.add_text('run_name', args.model_type)
+    if config.training.get('tensorboard_logging', {}).get('enable', False):
+        log_dir = config.training['tensorboard_logging'].get('log_dir', 'tensorboard_logs')
+        writer = SummaryWriter(log_dir=f"{args.results_path}/tensorboard_logs/{run_name}", flush_secs=30)
+        writer.add_text('args', str(args))
+        writer.add_text('model', str(model))
+        writer.add_text('optimizer', str(optimizer))
+        writer.add_text('scheduler', str(scheduler))
+        writer.add_text('scaler', str(scaler))
+        writer.add_text('config', str(config))
+        writer.add_text('run_name', args.model_type)
     
     for epoch in range(config.training.num_epochs):
         model.train().to(device)
