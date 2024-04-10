@@ -1,6 +1,6 @@
 # coding: utf-8
 __author__ = 'Roman Solovyev (ZFTurbo): https://github.com/ZFTurbo/'
-__version__ = '1.0.2'
+__version__ = '1.0.3'
 
 import random
 import argparse
@@ -567,6 +567,7 @@ def train_model(args):
 
             li = loss.item() * gradient_accumulation_steps
             loss_val += li
+            writer.add_scalar('Training/Loss', li, epoch * len(train_loader) + i)  # Log training loss
             total += 1
             pbar.set_postfix({'loss': 100 * li, 'avg_loss': 100 * loss_val / (i + 1)})
             loss.detach()
@@ -586,6 +587,9 @@ def train_model(args):
             sdr_avg = valid(model, args, config, device, verbose=False)
         else:
             sdr_avg = valid_multi_gpu(model, args, config, verbose=False)
+            writer.add_scalar('Validation/SDR_Avg', sdr_avg, epoch)  # Log validation SDR
+            current_lr = optimizer.param_groups[0]['lr']
+            writer.add_scalar('Learning_Rate', current_lr, epoch)  # Log learning rate
         if sdr_avg > best_sdr:
             store_path = args.results_path + '/model_{}_ep_{}_sdr_{:.4f}.ckpt'.format(args.model_type, epoch, sdr_avg)
             print('Store weights: {}'.format(store_path))
@@ -596,7 +600,8 @@ def train_model(args):
             )
             best_sdr = sdr_avg
         scheduler.step(sdr_avg)
-
+    writer.flush()
+    writer.close()  # Close the TensorBoard writer
 
 if __name__ == "__main__":
     train_model(None)
