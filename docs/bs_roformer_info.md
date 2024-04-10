@@ -142,4 +142,11 @@ training:
   optimizer: adam
   other_fix: false # it's needed for checking on multisong dataset if other is actually instrumental
   use_amp: true # enable or disable usage of mixed precision (float16) - usually it must be true
+  logwmse: false
+  tensorboard_logging:
+    enable: false  # Set to false to disable logging
+    log_dir: "tensorboard_logs"  # Customizable log directory
+  spectrogram_plotting:
+    enable: false  # Set to false to disable spectrogram plotting
+    plot_dir: "spectrogram_plots"  # Customizable plot directory (optional, you can decide where to store or how to handle plots)
 ```
