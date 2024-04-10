@@ -502,7 +502,8 @@ def train_model(args):
     best_sdr = -100
     
     # Tensorboard logging
-    if config.training.get('tensorboard_logging', {}).get('enable', False):
+    tensorboard_logging_enabled = config.training.get('tensorboard_logging', {}).get('enable', False)
+    if tensorboard_logging_enabled:
         log_dir = config.training['tensorboard_logging'].get('log_dir', 'tensorboard_logs')
         writer = SummaryWriter(log_dir=f"{args.results_path}/tensorboard_logs/{run_name}", flush_secs=30)
         writer.add_text('args', str(args))
@@ -567,7 +568,8 @@ def train_model(args):
 
             li = loss.item() * gradient_accumulation_steps
             loss_val += li
-            writer.add_scalar('Training/Loss', li, epoch * len(train_loader) + i)  # Log training loss
+            if tensorboard_logging_enabled:
+                writer.add_scalar('Training/Loss', li, epoch * len(train_loader) + i)  # Log training loss
             total += 1
             pbar.set_postfix({'loss': 100 * li, 'avg_loss': 100 * loss_val / (i + 1)})
             loss.detach()
@@ -583,12 +585,15 @@ def train_model(args):
         )
 
         # if you have problem with multiproc validation change 0 to 1
+        # If you have a problem with multiproc validation change 0 to 1
         if 0:
             sdr_avg = valid(model, args, config, device, verbose=False)
         else:
             sdr_avg = valid_multi_gpu(model, args, config, verbose=False)
+
+        current_lr = optimizer.param_groups[0]['lr']
+        if tensorboard_logging_enabled:
             writer.add_scalar('Validation/SDR_Avg', sdr_avg, epoch)  # Log validation SDR
-            current_lr = optimizer.param_groups[0]['lr']
             writer.add_scalar('Learning_Rate', current_lr, epoch)  # Log learning rate
         if sdr_avg > best_sdr:
             store_path = args.results_path + '/model_{}_ep_{}_sdr_{:.4f}.ckpt'.format(args.model_type, epoch, sdr_avg)
@@ -600,8 +605,9 @@ def train_model(args):
             )
             best_sdr = sdr_avg
         scheduler.step(sdr_avg)
-    writer.flush()
-    writer.close()  # Close the TensorBoard writer
+    if tensorboard_logging_enabled:
+        writer.flush()
+        writer.close()  # Close the TensorBoard writer
 
 if __name__ == "__main__":
     train_model(None)
