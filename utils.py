@@ -69,18 +69,14 @@ def demix_track(config, model, mix, device):
     # Do pad from the beginning and end to account floating window results better
     if length_init > 2 * border and (border > 0):
         mix = nn.functional.pad(mix, (border, border), mode='reflect')
-        
-    # Move mix tensor to the target device after padding
-    mix = mix.to(device)
 
     # Prepare windows arrays (do 1 time for speed up). This trick repairs click problems on the edges of segment
     window_size = C
-    # Move windowing tensors to the target device immediately after creation
-    fadein = torch.linspace(0, 1, fade_size, device=device)
-    fadeout = torch.linspace(1, 0, fade_size, device=device)
-    window_start = torch.ones(window_size, device=device)
-    window_middle = torch.ones(window_size, device=device)
-    window_finish = torch.ones(window_size, device=device)
+    fadein = torch.linspace(0, 1, fade_size)
+    fadeout = torch.linspace(1, 0, fade_size)
+    window_start = torch.ones(window_size)
+    window_middle = torch.ones(window_size)
+    window_finish = torch.ones(window_size)
     window_start[-fade_size:] *= fadeout # First audio chunk, no fadein
     window_finish[:fade_size] *= fadein # Last audio chunk, no fadeout
     window_middle[-fade_size:] *= fadeout
