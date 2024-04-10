@@ -37,6 +37,13 @@ training:
   other_fix: false # it's needed for checking on multisong dataset if other is actually instrumental
   use_amp: true # enable or disable usage of mixed precision (float16) - usually it must be true
   logwmse: false
+  tensorboard_logging:
+    enable: false  # Set to false to disable logging
+    log_dir: "tensorboard_logs"  # Customizable log directory
+  spectrogram_plotting:
+    enable: false  # Set to false to disable spectrogram plotting
+    plot_dir: "spectrogram_plots"  # Customizable plot directory (optional, you can decide where to store or how to handle plots)
+
 
 augmentations:
   enable: true # enable or disable all augmentations (to fast disable if needed)
@@ -55,6 +62,18 @@ augmentations:
   mp3_compression_on_mixture_bitrate_min: 32
   mp3_compression_on_mixture_bitrate_max: 320
   mp3_compression_on_mixture_backend: "lameenc"
+
+  # Apply aliasing on the mixture
+  aliasing_on_mixture: 0.0  # Probability of applying to mixture
+  aliasing_on_mixture_min_sample_rate: 8000 # Minimum target sample rate to downsample to
+  aliasing_on_mixture_max_sample_rate: 32000 # Maximum target sample rate to downsample to
+
+  # Add background noise to mixture: useful for training to remove sfx, crowd noise, etc.
+  background_noise_on_mixture:
+    probability: 0.0  # Probability of applying the background noise augmentation
+    path: "noise.wav"  # Path to the background noise file
+    min_absolute_rms_db: -25.0
+    max_absolute_rms_db: -1.0
 
   all:
     channel_shuffle: 0.5 # Set 0 or lower to disable

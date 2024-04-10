@@ -23,6 +23,18 @@ augmentations:
   mp3_compression_on_mixture_bitrate_max: 320
   mp3_compression_on_mixture_backend: "lameenc"
 
+  # Apply aliasing on the mixture
+  aliasing_on_mixture: 0.0  # Probability of applying to mixture (default: 0%)
+  aliasing_on_mixture_min_sample_rate: 8000 # Minimum target sample rate to downsample to
+  aliasing_on_mixture_max_sample_rate: 32000 # Maximum target sample rate to downsample to
+
+  # Add background noise to mixture: intended for training to remove sfx, crowd noise, etc.
+  background_noise_on_mixture:
+    probability: 0.0  # Probability of applying the background noise augmentation (default: 0%)
+    path: "noise.wav"  # Path to the background noise file
+    min_absolute_rms_db: -25.0
+    max_absolute_rms_db: -1.0
+
   all:
     channel_shuffle: 0.5 # Set 0 or lower to disable
     random_inverse: 0.1 # inverse track (better lower probability)
